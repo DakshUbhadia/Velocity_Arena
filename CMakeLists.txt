@@ -65,6 +65,10 @@ endif()
 add_executable(velocity_arena 
     src/main.cpp 
     src/external/src/gl.c
+    src/core/GameClock.cpp
+    src/core/Input.cpp
+    src/game/Player.cpp
+    src/graphics/Camera.cpp
     src/graphics/Shader.cpp
     src/graphics/Mesh.cpp
     src/graphics/Renderer.cpp
