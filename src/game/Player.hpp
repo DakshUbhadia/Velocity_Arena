@@ -3,10 +3,15 @@
 #include <glm/mat4x4.hpp>
 #include <glm/vec3.hpp>
 
+#include "physics/AABB.hpp"
+
 class Input;
 
 class Player {
 public:
+    // Rendered size: 1x1x1 cube. Half-extents = 0.5 on each axis.
+    static constexpr float kHalfSize = 0.5f;
+
     Player(const glm::vec3& position,
            float movementSpeed,
            int maxHealth = 100);
@@ -17,6 +22,9 @@ public:
     void reset(const glm::vec3& position);
 
     glm::mat4 modelMatrix() const;
+
+    // Returns an AABB in world space matching the player's rendered cube.
+    AABB bounds() const;
 
     const glm::vec3& position() const;
     const glm::vec3& facingDirection() const;

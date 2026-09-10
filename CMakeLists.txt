@@ -5,28 +5,30 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Build options
-option(ENABLE_SANITIZERS "Enable sanitizers in Debug build" OFF)
-option(ENABLE_PROFILING "Enable internal profiling" ON)
-option(BUILD_TESTS "Build Catch2 unit tests" OFF)
-option(BUILD_BENCHMARKS "Build benchmarks" OFF)
+option(ENABLE_SANITIZERS  "Enable ASan/UBSan in Debug builds"         OFF)
+option(ENABLE_PROFILING   "Enable internal profiling"                  ON)
+option(ENABLE_NETWORKING  "Enable networking/REST components"          OFF)
+option(BUILD_TESTS        "Build dependency-free AABB unit tests"      OFF)
+option(BUILD_BENCHMARKS   "Build standalone collision benchmark"       OFF)
 
-# Dependencies via FetchContent
+# Shared FetchContent dependency directory.
+# Reuses downloaded sources across build/, build-release/, build-asan/, etc.
+set(FETCHCONTENT_BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/.deps"
+    CACHE PATH "Shared FetchContent cache directory" FORCE)
+
 include(FetchContent)
 
-# GLFW
 FetchContent_Declare(
     glfw
     GIT_REPOSITORY https://github.com/glfw/glfw.git
     GIT_TAG 3.4
 )
-set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_DOCS     OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_WAYLAND OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_WAYLAND  OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(glfw)
 
-# GLM
 FetchContent_Declare(
     glm
     GIT_REPOSITORY https://github.com/g-truc/glm.git
@@ -35,35 +37,39 @@ FetchContent_Declare(
 set(GLM_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(glm)
 
-# nlohmann/json
-FetchContent_Declare(
-    json
-    GIT_REPOSITORY https://github.com/nlohmann/json.git
-    GIT_TAG v3.11.3
-)
-set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(json)
-
-# httplib
-FetchContent_Declare(
-    httplib
-    GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
-    GIT_TAG v0.16.0
-)
-FetchContent_MakeAvailable(httplib)
-
-# Catch2 (Optional)
-if(BUILD_TESTS)
+# Networking dependencies -- only fetched when ENABLE_NETWORKING=ON.
+# nlohmann/json and cpp-httplib will be added during the REST milestone.
+if(ENABLE_NETWORKING)
     FetchContent_Declare(
-        Catch2
-        GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-        GIT_TAG v3.5.3
+        json
+        GIT_REPOSITORY https://github.com/nlohmann/json.git
+        GIT_TAG v3.11.3
     )
-    FetchContent_MakeAvailable(Catch2)
+    set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(json)
+    FetchContent_Declare(
+        httplib
+        GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+        GIT_TAG v0.16.0
+    )
+    FetchContent_MakeAvailable(httplib)
 endif()
 
-add_executable(velocity_arena 
-    src/main.cpp 
+# velocity_physics -- reusable AABB collision static library.
+# Both velocity_arena and collision_benchmark link against this.
+add_library(velocity_physics STATIC
+    src/physics/AABB.cpp
+    src/physics/Collision.cpp
+)
+target_include_directories(velocity_physics PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(velocity_physics PUBLIC glm::glm)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(velocity_physics PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+# velocity_arena -- main game executable
+add_executable(velocity_arena
+    src/main.cpp
     src/external/src/gl.c
     src/core/GameClock.cpp
     src/core/Input.cpp
@@ -76,23 +82,22 @@ add_executable(velocity_arena
     src/graphics/Mesh.cpp
     src/graphics/Renderer.cpp
 )
-
-# Define directories
 target_include_directories(velocity_arena PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/external/include
 )
-
-# Link libraries
 target_link_libraries(velocity_arena PRIVATE
+    velocity_physics
     glfw
     glm::glm
-    nlohmann_json::nlohmann_json
-    httplib::httplib
 )
+if(ENABLE_NETWORKING)
+    target_link_libraries(velocity_arena PRIVATE
+        nlohmann_json::nlohmann_json
+        httplib::httplib
+    )
+endif()
 
-# Copy shaders post-build
 add_custom_command(TARGET velocity_arena POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_CURRENT_SOURCE_DIR}/shaders
@@ -101,9 +106,30 @@ add_custom_command(TARGET velocity_arena POST_BUILD
 
 if(ENABLE_SANITIZERS AND CMAKE_BUILD_TYPE STREQUAL "Debug")
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-        target_compile_options(velocity_arena PRIVATE -fsanitize=address,undefined -g -O0 -Wall -Wextra -Wpedantic)
+        target_compile_options(velocity_arena PRIVATE
+            -fsanitize=address,undefined -g -O0 -Wall -Wextra -Wpedantic)
         target_link_options(velocity_arena PRIVATE -fsanitize=address,undefined)
     endif()
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(velocity_arena PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+# collision_benchmark -- only when BUILD_BENCHMARKS=ON
+if(BUILD_BENCHMARKS)
+    add_executable(collision_benchmark benchmarks/collision_benchmark.cpp)
+    target_link_libraries(collision_benchmark PRIVATE velocity_physics)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        target_compile_options(collision_benchmark PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+endif()
+
+# aabb_tests -- only when BUILD_TESTS=ON. No external testing framework needed.
+if(BUILD_TESTS)
+    enable_testing()
+    add_executable(aabb_tests tests/aabb_tests.cpp)
+    target_link_libraries(aabb_tests PRIVATE velocity_physics)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        target_compile_options(aabb_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME AABBTests COMMAND aabb_tests)
 endif()

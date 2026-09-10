@@ -56,3 +56,106 @@ If we want to check `distance <= radius`, we can mathematically check `distanceS
 ### Spawn Position Offset
 To avoid the projectile spawning inside the player, we offset the position by adding a portion of the facing direction:
 `projectilePosition = playerPosition + facingDirection * offset;`
+
+
+---
+
+## AABB Representation
+
+An Axis-Aligned Bounding Box (AABB) is defined by two corner points:
+
+```
+min = center - halfExtents
+max = center + halfExtents
+```
+
+For a unit cube centered at (cx, cy, cz) with half-extents (0.5, 0.5, 0.5):
+```
+min = (cx - 0.5, cy - 0.5, cz - 0.5)
+max = (cx + 0.5, cy + 0.5, cz + 0.5)
+```
+
+The box sides are always parallel to the world axes (X, Y, Z), which is what
+"axis-aligned" means. This constraint makes intersection testing extremely cheap.
+
+### Why Half Extents?
+
+Half extents (radius) are preferred over full width/height/depth because
+the conversion to min/max is a single add/subtract:
+```
+min = center - halfExtents
+max = center + halfExtents
+```
+
+---
+
+## Interval Overlap
+
+An AABB on the X axis is an interval `[min.x, max.x]`.
+
+Two 1D intervals `[a_min, a_max]` and `[b_min, b_max]` overlap if and only if:
+```
+a_max >= b_min  AND  a_min <= b_max
+```
+
+Equivalently, they are SEPARATED (do not overlap) if:
+```
+a_max < b_min  OR  a_min > b_max
+```
+
+This gives us an early-out implementation:
+```cpp
+if (max_.x < other.min_.x || min_.x > other.max_.x) return false;  // X gap
+if (max_.y < other.min_.y || min_.y > other.max_.y) return false;  // Y gap
+if (max_.z < other.min_.z || min_.z > other.max_.z) return false;  // Z gap
+return true;
+```
+
+---
+
+## Why All Three Axes Must Overlap
+
+Two 3D boxes collide if and only if their projections overlap on ALL three axes
+simultaneously. This follows from the Separating Axis Theorem (SAT):
+
+> If there exists any axis along which the projections of two convex shapes
+> do NOT overlap, the shapes are separated.
+
+For AABBs, the candidate separating axes are just the three world axes (X, Y, Z)
+because the boxes are axis-aligned. We check all three. If any axis shows a gap,
+we immediately return "no collision."
+
+---
+
+## AABB Complexity
+
+A single AABB intersection test requires at most 6 comparisons (2 per axis).
+
+**A single AABB-vs-AABB test is O(1).**
+
+However, testing all N*(N-1)/2 unique pairs in a brute-force search is **O(N^2)**.
+Do not confuse the cost of one test with the cost of the loop that calls it.
+
+---
+
+## Naive All-Pairs Pair Count
+
+For N objects, the number of unique UNORDERED pairs (i, j) where i != j is:
+
+```
+N * (N - 1) / 2
+```
+
+Derivation:
+- There are N choices for i and (N-1) choices for j (excluding i itself).
+- N * (N-1) counts ORDERED pairs (A,B) and (B,A) separately.
+- Divide by 2 to count each pair once: N * (N-1) / 2.
+
+Verification:
+```
+N = 100:   100 * 99 / 2  =  4,950
+N = 500:   500 * 499 / 2 = 124,750
+N = 1000: 1000 * 999 / 2 = 499,500
+N = 2500: 2500 * 2499 / 2 = 3,123,750
+N = 5000: 5000 * 4999 / 2 = 12,497,500
+```

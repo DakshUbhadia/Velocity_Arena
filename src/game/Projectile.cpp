@@ -20,22 +20,25 @@ void Projectile::update(float deltaTime) {
     }
 }
 
-void Projectile::deactivate() {
-    active_ = false;
-}
-
-bool Projectile::active() const {
-    return active_;
-}
-
-const glm::vec3& Projectile::position() const {
-    return position_;
-}
+void Projectile::deactivate() { active_ = false; }
+bool Projectile::active() const { return active_; }
+const glm::vec3& Projectile::position() const { return position_; }
 
 glm::mat4 Projectile::modelMatrix() const {
     glm::mat4 model = glm::mat4(1.0f);
     model = glm::translate(model, position_);
-    // Scale cube to 0.2 units (0.15-0.25 was suggested)
-    model = glm::scale(model, glm::vec3(0.2f, 0.2f, 0.2f));
+    // Scale the unit cube to kSize on all axes.
+    // This constant is also used by bounds() to keep visuals and collision in sync.
+    model = glm::scale(model, glm::vec3(kSize, kSize, kSize));
     return model;
+}
+
+AABB Projectile::bounds() const {
+    // The projectile is rendered as a kSize x kSize x kSize cube centered at position_.
+    // Half-extents = (kHalfSize, kHalfSize, kHalfSize) = (0.1, 0.1, 0.1).
+    // kHalfSize is derived from kSize so bounds() stays consistent with modelMatrix().
+    return AABB::fromCenterHalfExtents(
+        position_,
+        glm::vec3(kHalfSize, kHalfSize, kHalfSize)
+    );
 }
