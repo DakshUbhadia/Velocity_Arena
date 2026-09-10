@@ -11,6 +11,19 @@ option(ENABLE_NETWORKING  "Enable networking/REST components"          OFF)
 option(BUILD_TESTS        "Build dependency-free AABB unit tests"      OFF)
 option(BUILD_BENCHMARKS   "Build standalone collision benchmark"       OFF)
 
+function(enable_project_sanitizers target_name)
+    if(ENABLE_SANITIZERS AND CMAKE_BUILD_TYPE STREQUAL "Debug")
+        if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+            target_compile_options(${target_name} PRIVATE -fsanitize=address,undefined -g -O0 -fno-omit-frame-pointer)
+            
+            get_target_property(target_type ${target_name} TYPE)
+            if(NOT target_type STREQUAL "STATIC_LIBRARY")
+                target_link_options(${target_name} PRIVATE -fsanitize=address,undefined)
+            endif()
+        endif()
+    endif()
+endfunction()
+
 # Shared FetchContent dependency directory.
 # Reuses downloaded sources across build/, build-release/, build-asan/, etc.
 set(FETCHCONTENT_BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/.deps"
@@ -60,12 +73,14 @@ endif()
 add_library(velocity_physics STATIC
     src/physics/AABB.cpp
     src/physics/Collision.cpp
+    src/physics/SpatialGrid.cpp
 )
 target_include_directories(velocity_physics PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(velocity_physics PUBLIC glm::glm)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(velocity_physics PRIVATE -Wall -Wextra -Wpedantic)
 endif()
+enable_project_sanitizers(velocity_physics)
 
 # velocity_arena -- main game executable
 add_executable(velocity_arena
@@ -104,15 +119,10 @@ add_custom_command(TARGET velocity_arena POST_BUILD
         $<TARGET_FILE_DIR:velocity_arena>/shaders
 )
 
-if(ENABLE_SANITIZERS AND CMAKE_BUILD_TYPE STREQUAL "Debug")
-    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-        target_compile_options(velocity_arena PRIVATE
-            -fsanitize=address,undefined -g -O0 -Wall -Wextra -Wpedantic)
-        target_link_options(velocity_arena PRIVATE -fsanitize=address,undefined)
-    endif()
-elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(velocity_arena PRIVATE -Wall -Wextra -Wpedantic)
 endif()
+enable_project_sanitizers(velocity_arena)
 
 # collision_benchmark -- only when BUILD_BENCHMARKS=ON
 if(BUILD_BENCHMARKS)
@@ -121,15 +131,26 @@ if(BUILD_BENCHMARKS)
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         target_compile_options(collision_benchmark PRIVATE -Wall -Wextra -Wpedantic)
     endif()
+    enable_project_sanitizers(collision_benchmark)
 endif()
 
 # aabb_tests -- only when BUILD_TESTS=ON. No external testing framework needed.
 if(BUILD_TESTS)
     enable_testing()
+    
     add_executable(aabb_tests tests/aabb_tests.cpp)
     target_link_libraries(aabb_tests PRIVATE velocity_physics)
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         target_compile_options(aabb_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
+    enable_project_sanitizers(aabb_tests)
     add_test(NAME AABBTests COMMAND aabb_tests)
+
+    add_executable(spatial_grid_tests tests/spatial_grid_tests.cpp)
+    target_link_libraries(spatial_grid_tests PRIVATE velocity_physics)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        target_compile_options(spatial_grid_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    enable_project_sanitizers(spatial_grid_tests)
+    add_test(NAME SpatialGridTests COMMAND spatial_grid_tests)
 endif()

@@ -70,3 +70,27 @@ Renderer
 - `main.cpp` manages the lifetime of OpenGL/GLFW contexts and resource creation.
 - `Input` does not own the GLFW window, it only references it.
 - GPU resources (Shaders, Meshes) are intentionally destroyed before `glfwTerminate()`.
+
+## Physics Architecture
+
+    AABB
+      |
+      v
+    +--------------------------+
+    | Collision Broad Phases   |
+    +--------------------------+
+       |                  |
+       v                  v
+    Brute Force       Spatial Grid
+       |                  |
+       +--------+---------+
+                |
+                v
+         AABB::intersects()
+                |
+                v
+          CollisionStats
+
+**BruteForce**: the correctness and reference implementation ensuring verifiable and deterministically reliable outputs.
+**SpatialGrid**: the optimized uniform broad-phase partition handling scale efficiently.
+**AABB**: the underlying shared narrow-phase bounding mechanism and intersection check.

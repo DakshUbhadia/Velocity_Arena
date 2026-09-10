@@ -159,3 +159,39 @@ N = 1000: 1000 * 999 / 2 = 499,500
 N = 2500: 2500 * 2499 / 2 = 3,123,750
 N = 5000: 5000 * 4999 / 2 = 12,497,500
 ```
+
+
+# Spatial Grid Mathematics
+
+## World to Cell Mapping
+
+    cellX =
+        floor(worldX / cellSize)
+
+    cellZ =
+        floor(worldZ / cellSize)
+
+Applying floor is required to handle correct offset for negative world boundaries. A pure cast truncates to zero (e.g. (int)-0.5 = 0), missing appropriate partition bounding and resulting in grid inversion gaps.
+
+## AABB Cell Range
+
+    minCell =
+        floor(AABB.min / cellSize)
+
+    maxCell =
+        floor(AABB.max / cellSize)
+
+## Candidate Reduction
+
+Spatial partitioning relies on the physical impossibility of objects located at distinct independent sectors of space to overlap. Rather than checking an object across the full volume against all other distant actors, it guarantees intersection validity simply against the narrow proximate pool enclosed inside their common sector(s).
+
+## Pair Count Baseline
+
+Retained format:
+
+    N(N-1)/2
+
+## Candidate Reduction Formula
+
+    reduction =
+        1 - (optimizedCandidates / baselineCandidates)

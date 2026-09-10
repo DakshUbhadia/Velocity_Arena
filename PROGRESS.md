@@ -126,3 +126,61 @@ Sanitizer verification pending due to CMake/FetchContent network issue during de
 | 1000 | 499,500         | 325           | 6,936            | 13.89        |
 | 2500 | 3,123,750       | 759           | 55,590           | 17.80        |
 | 5000 | 12,497,500      | 1,637         | 169,939          | 13.60        |
+
+
+## Milestone 5 - Uniform Spatial Grid Broad Phase
+
+**Status**: Completed and Verified
+
+**What has been implemented:**
+- Added a reusable XZ uniform spatial grid for broad-phase collision
+  detection.
+- Mapped world coordinates to grid cells using floor-based coordinate
+  conversion with correct negative-coordinate handling.
+- Inserted AABBs into every overlapped grid cell to preserve collisions
+  across cell boundaries.
+- Added canonical object-pair deduplication for AABBs sharing multiple
+  cells.
+- Added spatial-grid diagnostics covering unique candidate checks,
+  cell insertions, occupied cells, raw cell-pair visits, and duplicate
+  pairs suppressed.
+- Added an optimized all-pairs collision path using the same AABB
+  narrow-phase implementation as the brute-force baseline.
+- Added deterministic correctness tests comparing spatial-grid results
+  against brute-force results.
+- Extended the Release benchmark to compare brute-force and uniform-grid
+  collision processing on identical scenes of 100--5,000 entities.
+- Added measured candidate-reduction, end-to-end runtime, and speedup
+  metrics.
+- Added a cell-size sensitivity study at 5,000 entities.
+- Corrected sanitizer instrumentation across first-party physics/test
+  targets.
+- Expanded performance, mathematics, architecture, and learning
+  documentation.
+
+**Verification:**
+- Debug build completed successfully.
+- AABB tests passed.
+- SpatialGrid tests passed.
+- ASan/UBSan tests passed.
+- SpatialGrid produced the exact same true intersection count as
+  bruteForceAllPairs for every benchmark workload.
+- Release comparison benchmark completed successfully.
+- Results written to results/collision_comparison.csv.
+
+**Benchmark Results:**
+
+| N | Baseline Candidates | Grid Candidates | Reduction | Baseline us | Grid us | Speedup | Intersections |
+|---|--------------------:|----------------:|----------:|------------:|--------:|--------:|--------------:|
+| 100 |                4950 |             114 |     97.7% |          15 |      35 |   0.45x |            28 |
+| 500 |              124750 |             599 |     99.5% |         593 |     224 |   2.65x |           171 |
+| 1000 |              499500 |            1249 |     99.7% |        2234 |     542 |   4.12x |           325 |
+| 2500 |             3123750 |            3215 |     99.9% |       15801 |    1456 |  10.85x |           759 |
+| 5000 |            12497500 |            6619 |     99.9% |       69514 |    2780 |  25.00x |          1637 |
+
+Cell-Size Sensitivity (N=5000):
+| Cell Size | Candidates | Cell Insertions | Occupied Cells | Grid Time | Speedup |
+|-----------|------------|-----------------|----------------|-----------|---------|
+| 1.0       |       3658 |           20000 |          14692 |   4259 us |  17.28x |
+| 2.0       |       6619 |           11435 |           6029 |   2575 us |  26.00x |
+| 4.0       |      14437 |            7887 |           2004 |   2256 us |  29.11x |

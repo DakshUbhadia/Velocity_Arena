@@ -1,55 +1,18 @@
-// collision_benchmark.cpp
-//
-// Standalone brute-force AABB collision benchmark.
-//
-// Purpose:
-//   Establishes a deterministic O(N^2) all-pairs collision baseline.
-//   Future milestone will compare a spatial-grid broad phase against
-//   these exact same workloads and metrics.
-//
-// Methodology:
-//   - Fixed RNG seed (1337) for reproducibility across runs.
-//   - Scene generated OUTSIDE the timed section.
-//   - One untimed warm-up call before timed repetitions.
-//   - 5 timed repetitions per workload; median is reported.
-//   - Candidate count verified to equal N*(N-1)/2.
-//   - Release-build warning printed when NDEBUG is not defined.
-//   - Results written to results/collision_baseline.csv.
-//
-// Build:
-//   cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_BENCHMARKS=ON
-//   cmake --build build-release
-//   ./build-release/collision_benchmark
-
-#include <algorithm>
-#include <chrono>
-#include <cmath>
-#include <cstdint>
-#include <filesystem>
-#include <fstream>
 #include <iostream>
-#include <random>
-#include <span>
 #include <vector>
+#include <chrono>
+#include <random>
+#include <fstream>
+#include <iomanip>
+#include <filesystem>
+#include <cmath>
 
 #include "physics/AABB.hpp"
 #include "physics/Collision.hpp"
+#include "physics/SpatialGrid.hpp"
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-// Generate a reproducible set of N AABBs on the XZ plane.
-//
-// World-size scales with sqrt(N) so object density stays approximately
-// constant as N grows. Without this scaling, larger N would produce
-// artificially denser scenes with more intersections.
-//
-//   worldSide = sqrt(N) * 2.5
-//   x in [-worldSide/2, worldSide/2]
-//   z in [-worldSide/2, worldSide/2]
-//   y center = 0.5, halfExtents = (0.5, 0.5, 0.5)
-//
-// The RNG is seeded externally so it can be reset between workloads
-// for consistent per-workload sequences.
 static std::vector<AABB> generateScene(std::size_t N, std::mt19937& rng)
 {
     const float worldSide = std::sqrt(static_cast<float>(N)) * 2.5f;
@@ -71,7 +34,6 @@ static std::vector<AABB> generateScene(std::size_t N, std::mt19937& rng)
     return boxes;
 }
 
-// Return the median of a vector of durations (modifies the vector in place via sort).
 static std::chrono::nanoseconds median(std::vector<std::chrono::nanoseconds>& samples)
 {
     std::sort(samples.begin(), samples.end());
@@ -82,68 +44,88 @@ static std::chrono::nanoseconds median(std::vector<std::chrono::nanoseconds>& sa
 
 struct WorkloadResult {
     std::size_t       entityCount{};
-    std::uint64_t     candidateChecks{};
+    std::uint64_t     baselineCandidates{};
+    std::uint64_t     gridCandidates{};
     std::uint64_t     intersections{};
-    std::chrono::nanoseconds medianTime{};
+    std::chrono::nanoseconds baselineMedianTime{};
+    std::chrono::nanoseconds gridMedianTime{};
+    
+    std::size_t       occupiedCells{};
+    std::uint64_t     cellInsertions{};
+    std::uint64_t     rawCellPairVisits{};
+    std::uint64_t     duplicatePairsSkipped{};
+    float             cellSize{};
 };
 
-static WorkloadResult runWorkload(std::size_t N, int repetitions = 5)
+static WorkloadResult runWorkload(std::size_t N, float cellSize, int repetitions = 5)
 {
-    // Use a fixed seed for reproducibility.
-    // Reset to 1337 for every workload so each N gets the same sequence.
+    // Fixed seed 1337 for reproducibility.
     std::mt19937 rng(1337);
 
-    // Generate scene OUTSIDE the timed section.
     std::vector<AABB> boxes = generateScene(N, rng);
     std::span<const AABB> boxSpan(boxes);
 
-    // Expected candidate count: N*(N-1)/2
     const std::uint64_t expectedCandidates =
         static_cast<std::uint64_t>(N) * (static_cast<std::uint64_t>(N) - 1) / 2;
 
     // ── Warm-up ───────────────────────────────────────────────────────────────
-    // One untimed warm-up run to populate CPU caches and JIT compile paths.
-    CollisionStats warmupStats = bruteForceAllPairs(boxSpan);
+    // Warm-up is used to reduce first-run effects such as:
+    // - cold instruction/data caches
+    // - initial page residency
+    // - branch predictor state
+    // - one-time runtime/library effects
+    CollisionStats warmupBase = bruteForceAllPairs(boxSpan);
+    SpatialGridStats warmupGrid = spatialGridAllPairs(boxSpan, cellSize);
 
-    // Verify candidate count is correct.
-    if (warmupStats.candidateChecks != expectedCandidates) {
-        std::cerr << "ERROR: N=" << N
-                  << " expected " << expectedCandidates
-                  << " candidate checks but got " << warmupStats.candidateChecks
-                  << "\n";
+    if (warmupBase.candidateChecks != expectedCandidates) {
+        std::cerr << "ERROR: N=" << N << " expected " << expectedCandidates << " candidates\n";
+        std::exit(1);
+    }
+    if (warmupBase.intersections != warmupGrid.intersections) {
+        std::cerr << "ERROR: N=" << N << " intersections mismatch: base=" 
+                  << warmupBase.intersections << " grid=" << warmupGrid.intersections << "\n";
         std::exit(1);
     }
 
     // ── Timed repetitions ─────────────────────────────────────────────────────
-    std::vector<std::chrono::nanoseconds> timings;
-    timings.reserve(static_cast<std::size_t>(repetitions));
+    std::vector<std::chrono::nanoseconds> baseTimings;
+    std::vector<std::chrono::nanoseconds> gridTimings;
+    baseTimings.reserve(repetitions);
+    gridTimings.reserve(repetitions);
 
-    std::uint64_t lastIntersections = warmupStats.intersections;
+    std::uint64_t lastIntersections = warmupBase.intersections;
 
     for (int rep = 0; rep < repetitions; ++rep) {
-        auto t0    = std::chrono::steady_clock::now();
-        CollisionStats stats = bruteForceAllPairs(boxSpan);
-        auto t1    = std::chrono::steady_clock::now();
+        // Run Baseline
+        auto t0 = std::chrono::steady_clock::now();
+        CollisionStats bStats = bruteForceAllPairs(boxSpan);
+        auto t1 = std::chrono::steady_clock::now();
+        baseTimings.push_back(t1 - t0);
 
-        timings.push_back(t1 - t0);
+        // Run Grid
+        auto t2 = std::chrono::steady_clock::now();
+        SpatialGridStats gStats = spatialGridAllPairs(boxSpan, cellSize);
+        auto t3 = std::chrono::steady_clock::now();
+        gridTimings.push_back(t3 - t2);
 
-        // Verify consistency across runs.
-        if (stats.candidateChecks != expectedCandidates) {
-            std::cerr << "ERROR: inconsistent candidate count on rep " << rep << "\n";
-            std::exit(1);
-        }
-        if (stats.intersections != lastIntersections) {
+        if (bStats.intersections != lastIntersections || gStats.intersections != lastIntersections) {
             std::cerr << "ERROR: inconsistent intersection count on rep " << rep << "\n";
             std::exit(1);
         }
-        lastIntersections = stats.intersections;
     }
 
     WorkloadResult result;
     result.entityCount    = N;
-    result.candidateChecks = expectedCandidates;
+    result.baselineCandidates = expectedCandidates;
+    result.gridCandidates = warmupGrid.candidateChecks;
     result.intersections   = lastIntersections;
-    result.medianTime      = median(timings);
+    result.baselineMedianTime = median(baseTimings);
+    result.gridMedianTime = median(gridTimings);
+    result.cellSize = cellSize;
+    result.occupiedCells = warmupGrid.occupiedCells;
+    result.cellInsertions = warmupGrid.cellInsertions;
+    result.rawCellPairVisits = warmupGrid.rawCellPairVisits;
+    result.duplicatePairsSkipped = warmupGrid.duplicatePairsSkipped;
     return result;
 }
 
@@ -152,83 +134,95 @@ static WorkloadResult runWorkload(std::size_t N, int repetitions = 5)
 int main()
 {
 #ifndef NDEBUG
-    std::cout << "WARNING: benchmark is not running in an optimized Release build.\n"
-              << "         Performance numbers from this run should NOT be used\n"
-              << "         for documentation. Rebuild with -DCMAKE_BUILD_TYPE=Release.\n\n";
+    std::cout << "WARNING: running in Debug build. Benchmark results will be inaccurate.\n\n";
 #endif
 
-    std::cout << "Velocity Arena -- AABB Collision Baseline Benchmark\n"
+    std::cout << "Velocity Arena -- Collision Baseline vs Spatial Grid\n"
               << "====================================================\n\n";
 
-    std::cout << "Configuration:\n"
-              << "  RNG seed:     1337 (fixed for reproducibility)\n"
-              << "  AABB size:    1x1x1 (half-extents 0.5)\n"
-              << "  Scene scale:  worldSide = sqrt(N) * 2.5\n"
-              << "  Warm-up:      1 untimed run\n"
-              << "  Repetitions:  5 timed runs, median reported\n\n";
-
-    // Entity counts to benchmark
     const std::vector<std::size_t> entityCounts = {100, 500, 1000, 2500, 5000};
+    const float mainCellSize = 2.0f;
     const int repetitions = 5;
 
-    // Print table header
-    std::cout << "| N      | Candidate Checks | Intersections | Median Time (us) | ns/Candidate |\n";
-    std::cout << "|--------|-----------------|---------------|------------------|--------------|\n";
+    std::cout << "| N | Baseline Candidates | Grid Candidates | Reduction | Baseline us | Grid us | Speedup | Intersections |\n";
+    std::cout << "|---|--------------------:|----------------:|----------:|------------:|--------:|--------:|--------------:|\n";
 
     std::vector<WorkloadResult> results;
     results.reserve(entityCounts.size());
 
     for (std::size_t N : entityCounts) {
-        std::cout << "Running N=" << N << "..." << std::flush;
-
-        WorkloadResult r = runWorkload(N, repetitions);
+        WorkloadResult r = runWorkload(N, mainCellSize, repetitions);
         results.push_back(r);
 
-        double us         = static_cast<double>(r.medianTime.count()) / 1000.0;
-        double nsPerCheck = (r.candidateChecks > 0)
-            ? static_cast<double>(r.medianTime.count()) / static_cast<double>(r.candidateChecks)
-            : 0.0;
+        double redPct = 100.0 * (1.0 - static_cast<double>(r.gridCandidates) / static_cast<double>(r.baselineCandidates));
+        double b_us = static_cast<double>(r.baselineMedianTime.count()) / 1000.0;
+        double g_us = static_cast<double>(r.gridMedianTime.count()) / 1000.0;
+        double speedup = b_us / g_us;
 
-        std::cout << "\r| " << std::left;
-        std::cout.width(6); std::cout << N;
-        std::cout << " | ";
-        std::cout.width(15); std::cout << r.candidateChecks;
-        std::cout << " | ";
-        std::cout.width(13); std::cout << r.intersections;
-        std::cout << " | ";
-        std::cout.width(16); std::cout << static_cast<long long>(us);
-        std::cout << " | ";
-        std::cout.width(12); std::cout << nsPerCheck;
-        std::cout << " |\n";
+        std::cout << "| " << std::left << std::setw(1) << N << " | ";
+        std::cout << std::right << std::setw(19) << r.baselineCandidates << " | ";
+        std::cout << std::setw(15) << r.gridCandidates << " | ";
+        std::cout << std::setw(8) << std::fixed << std::setprecision(1) << redPct << "% | ";
+        std::cout << std::setw(11) << static_cast<long long>(b_us) << " | ";
+        std::cout << std::setw(7) << static_cast<long long>(g_us) << " | ";
+        std::cout << std::setw(6) << std::fixed << std::setprecision(2) << speedup << "x | ";
+        std::cout << std::setw(13) << r.intersections << " |\n";
+    }
+
+    std::cout << "\nCell-Size Sensitivity (N=5000):\n";
+    std::cout << "| Cell Size | Candidates | Cell Insertions | Occupied Cells | Grid Time | Speedup |\n";
+    std::cout << "|-----------|------------|-----------------|----------------|-----------|---------|\n";
+    
+    std::vector<float> sensitivitySizes = {1.0f, 2.0f, 4.0f};
+    for (float cs : sensitivitySizes) {
+        WorkloadResult r = runWorkload(5000, cs, repetitions);
+        double b_us = static_cast<double>(r.baselineMedianTime.count()) / 1000.0;
+        double g_us = static_cast<double>(r.gridMedianTime.count()) / 1000.0;
+        double speedup = b_us / g_us;
+
+        std::cout << "| " << std::left << std::setw(9) << std::fixed << std::setprecision(1) << cs << " | ";
+        std::cout << std::right << std::setw(10) << r.gridCandidates << " | ";
+        std::cout << std::setw(15) << r.cellInsertions << " | ";
+        std::cout << std::setw(14) << r.occupiedCells << " | ";
+        std::cout << std::setw(6) << static_cast<long long>(g_us) << " us | ";
+        std::cout << std::setw(6) << std::fixed << std::setprecision(2) << speedup << "x |\n";
     }
 
     // ── CSV output ────────────────────────────────────────────────────────────
     std::filesystem::create_directories("results");
-    const std::string csvPath = "results/collision_baseline.csv";
+    const std::string csvPath = "results/collision_comparison.csv";
 
     std::ofstream csv(csvPath);
-    if (!csv) {
-        std::cerr << "ERROR: Could not open " << csvPath << " for writing.\n";
-        return 1;
+    if (csv) {
+        csv << "entity_count,cell_size,baseline_candidates,grid_candidates,candidate_reduction_percent,"
+            << "intersections,baseline_median_us,grid_median_us,speedup,time_reduction_percent,"
+            << "occupied_cells,cell_insertions,raw_cell_pair_visits,duplicate_pairs_skipped\n";
+
+        for (const auto& r : results) {
+            double redPct = 100.0 * (1.0 - static_cast<double>(r.gridCandidates) / static_cast<double>(r.baselineCandidates));
+            double b_us = static_cast<double>(r.baselineMedianTime.count()) / 1000.0;
+            double g_us = static_cast<double>(r.gridMedianTime.count()) / 1000.0;
+            double speedup = b_us / g_us;
+            double timeRedPct = 100.0 * (1.0 - g_us / b_us);
+
+            csv << r.entityCount << ","
+                << r.cellSize << ","
+                << r.baselineCandidates << ","
+                << r.gridCandidates << ","
+                << redPct << ","
+                << r.intersections << ","
+                << b_us << ","
+                << g_us << ","
+                << speedup << ","
+                << timeRedPct << ","
+                << r.occupiedCells << ","
+                << r.cellInsertions << ","
+                << r.rawCellPairVisits << ","
+                << r.duplicatePairsSkipped << "\n";
+        }
+        csv.close();
+        std::cout << "\nComparison results written to " << csvPath << "\n";
     }
-
-    csv << "entity_count,candidate_checks,intersections,median_time_us,ns_per_candidate\n";
-
-    for (const auto& r : results) {
-        double us = static_cast<double>(r.medianTime.count()) / 1000.0;
-        double nsPerCheck = (r.candidateChecks > 0)
-            ? static_cast<double>(r.medianTime.count()) / static_cast<double>(r.candidateChecks)
-            : 0.0;
-
-        csv << r.entityCount    << ","
-            << r.candidateChecks << ","
-            << r.intersections   << ","
-            << us                << ","
-            << nsPerCheck        << "\n";
-    }
-
-    csv.close();
-    std::cout << "\nBaseline results written to " << csvPath << "\n";
-
+    
     return 0;
 }
