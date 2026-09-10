@@ -17,13 +17,21 @@
 #include "core/Input.hpp"
 
 #include "game/Game.hpp"
+#include "core/Profiler.hpp"
+#include "core/RuntimeOptions.hpp"
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
     (void)window;
     glViewport(0, 0, width, height);
 }
 
-int main() {
+int main(int argc, char** argv) {
+    RuntimeOptions options = parseRuntimeOptions(argc, argv);
+    if (options.showHelp) {
+        std::cout << "Usage: velocity_arena [options]\n";
+        return 0;
+    }
+
     if (!glfwInit()) {
         std::cerr << "Failed to initialize GLFW" << std::endl;
         return -1;
@@ -42,6 +50,10 @@ int main() {
 
     glfwMakeContextCurrent(window);
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
+
+    if (!options.vsync) {
+        glfwSwapInterval(0);
+    }
 
     if (!gladLoadGL((GLADloadfunc)glfwGetProcAddress)) {
         std::cerr << "Failed to initialize GLAD" << std::endl;
@@ -66,7 +78,8 @@ int main() {
         GameClock clock;
         Input input(window);
         
-        Game game;
+        Game game(options);
+        Profiler profiler;
         
         // Initial Camera Setup
         glm::vec3 cameraOffset(0.0f, 6.0f, 8.0f);
@@ -74,22 +87,38 @@ int main() {
 
         double lastTitleUpdateTime = 0.0;
         int frameCount = 0;
+        
+        bool isStress = options.stressCount > 0;
+        int stressFrame = 0;
+
+        if (options.profile && !isStress) {
+            profiler.beginCapture(100000); // arbitrarily large for interactive profiling
+        }
 
         while (!glfwWindowShouldClose(window)) {
-            // 1. Poll Events
-            glfwPollEvents();
+            profiler.beginFrame();
+            
+            {
+                VA_PROFILE_SCOPE(profiler, ProfileSection::Frame);
+
+                // 1. Poll Events
+                glfwPollEvents();
 
             // 2. Tick Game Clock
             clock.tick();
             float dt = clock.deltaTime();
+            if (isStress) dt = 1.0f / 60.0f; // Fixed timestep for benchmark stability
 
-            // Handle Escape manually
-            if (input.isKeyDown(GLFW_KEY_ESCAPE)) {
-                glfwSetWindowShouldClose(window, GLFW_TRUE);
+            {
+                VA_PROFILE_SCOPE(profiler, ProfileSection::Input);
+                // Handle Escape manually
+                if (input.isKeyDown(GLFW_KEY_ESCAPE)) {
+                    glfwSetWindowShouldClose(window, GLFW_TRUE);
+                }
             }
 
             // 3. Update Game Logic
-            game.update(input, dt);
+            game.update(input, dt, profiler);
 
             // Update Camera to follow player
             camera.setPosition(game.player().position() + cameraOffset);
@@ -106,6 +135,9 @@ int main() {
                           << " | Score: " << game.score()
                           << " | Enemies: " << game.enemies().size()
                           << " | FPS: " << static_cast<int>(fps);
+                    if (options.profile) {
+                        title << " | Draws: " << renderer.stats().drawCalls;
+                    }
                 } else {
                     title << "Velocity Arena | GAME OVER"
                           << " | Score: " << game.score()
@@ -129,8 +161,12 @@ int main() {
             glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspectRatio, 0.1f, 100.0f);
             glm::mat4 view = camera.viewMatrix();
 
-            // 5. Render
-            renderer.clear();
+            {
+                VA_PROFILE_SCOPE(profiler, ProfileSection::RenderSubmission);
+
+                // 5. Render
+                renderer.beginFrame();
+                renderer.clear();
 
             // Render Floor (Neutral Gray)
             glm::mat4 floorModel = glm::mat4(1.0f);
@@ -158,9 +194,32 @@ int main() {
                 if (!proj.active()) continue;
                 renderer.draw(cubeMesh, shader, proj.modelMatrix(), view, projection, glm::vec3(0.0f, 1.0f, 1.0f)); // Cyan
             }
+            } // End RenderSubmission scope
+            
+            } // End Frame scope
+            
+            profiler.endFrame();
 
             // 6. Swap Buffers
             glfwSwapBuffers(window);
+            
+            if (isStress) {
+                stressFrame++;
+                if (static_cast<std::size_t>(stressFrame) == options.warmupFrames) {
+                    std::cout << "Warm-up complete. Starting measurement for " << options.measureFrames << " frames.\n";
+                    profiler.clear();
+                    profiler.beginCapture(options.measureFrames);
+                } else if (static_cast<std::size_t>(stressFrame) == options.warmupFrames + options.measureFrames) {
+                    profiler.endCapture();
+                    break;
+                }
+            }
+        }
+        
+        if (options.profile || isStress) {
+            std::cout << "Writing profiler results to " << options.outputPath << "...\n";
+            profiler.writeSummaryCsv(options.outputPath + "_summary.csv");
+            profiler.writeFrameCsv(options.outputPath + "_frames.csv");
         }
         }
     } catch (const std::exception& e) {

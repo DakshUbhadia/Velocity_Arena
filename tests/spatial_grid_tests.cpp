@@ -61,8 +61,33 @@ static void runPropertyTest(std::size_t N, unsigned int seed) {
     }
 }
 
+static void runQueryTests() {
+    std::printf("Running SpatialGrid Query tests...\n\n");
+    SpatialGrid grid(2.0f);
+    std::vector<std::size_t> out;
+
+    // Q1: Empty grid query
+    grid.query(AABB(glm::vec3(0,0,0), glm::vec3(1,1,1)), out);
+    check(out.empty(), "Query 1: Empty grid");
+
+    // Q2: One object returned
+    grid.insert(42, AABB(glm::vec3(0,0,0), glm::vec3(1,1,1)));
+    grid.query(AABB(glm::vec3(0,0,0), glm::vec3(1,1,1)), out);
+    check(out.size() == 1 && out[0] == 42, "Query 2: One object");
+
+    // Q3: Non-overlapping returns empty
+    grid.query(AABB(glm::vec3(10,0,10), glm::vec3(11,1,11)), out);
+    check(out.empty(), "Query 3: Non-overlapping");
+
+    // Q4: Multi-cell object returned once
+    grid.insert(99, AABB(glm::vec3(0.5f,0,0.5f), glm::vec3(2.5f,1,2.5f))); // spans cells
+    grid.query(AABB(glm::vec3(0.5f,0,0.5f), glm::vec3(2.5f,1,2.5f)), out);
+    check(out.size() == 2 && out[0] == 42 && out[1] == 99, "Query 4: Multi-cell object returned once");
+}
+
 int main() {
-    std::printf("Running SpatialGrid tests...\n\n");
+    runQueryTests();
+    std::printf("\nRunning SpatialGrid tests...\n\n");
 
     // TEST 1: Empty vector
     {

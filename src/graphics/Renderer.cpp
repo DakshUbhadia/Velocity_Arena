@@ -5,6 +5,10 @@ Renderer::Renderer() {
     glEnable(GL_DEPTH_TEST);
 }
 
+void Renderer::beginFrame() {
+    stats_.drawCalls = 0;
+}
+
 void Renderer::clear() const {
     glClearColor(0.15f, 0.15f, 0.15f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -16,7 +20,9 @@ void Renderer::draw(
     const glm::mat4& model,
     const glm::mat4& view,
     const glm::mat4& projection,
-    const glm::vec3& color) const {
+    const glm::vec3& color) {
+    
+    stats_.drawCalls++;
     
     shader.use();
     shader.setMat4("uModel", model);

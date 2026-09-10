@@ -7,6 +7,16 @@
 #include "game/Enemy.hpp"
 #include "game/Projectile.hpp"
 #include "core/Input.hpp"
+#include "core/Profiler.hpp"
+#include "core/RuntimeOptions.hpp"
+#include "physics/SpatialGrid.hpp"
+
+struct GameplayCollisionStats {
+    std::uint64_t candidateChecks{0};
+    std::uint64_t intersections{0};
+    std::uint64_t gridCellInsertions{0};
+    std::size_t occupiedCells{0};
+};
 
 enum class GameState {
     Running,
@@ -15,9 +25,9 @@ enum class GameState {
 
 class Game {
 public:
-    Game();
+    Game(const RuntimeOptions& options = RuntimeOptions{});
 
-    void update(const Input& input, float deltaTime);
+    void update(const Input& input, float deltaTime, Profiler& profiler);
 
     void reset();
 
@@ -29,6 +39,8 @@ public:
 
     const std::vector<Enemy>& enemies() const;
     const std::vector<Projectile>& projectiles() const;
+
+    const GameplayCollisionStats& collisionStats() const { return collisionStats_; }
 
 private:
     Player player_;
@@ -51,6 +63,12 @@ private:
 
     void spawnEnemy();
     void spawnProjectile();
-    void resolveProjectileEnemyCollisions();
+    void resolveProjectileEnemyCollisionsBruteForce();
+    void resolveProjectileEnemyCollisionsSpatialGrid();
     void removeInactiveObjects();
+
+    RuntimeOptions options_;
+    GameplayCollisionStats collisionStats_;
+    SpatialGrid enemyGrid_{2.0f};
+    std::vector<std::size_t> collisionCandidatesScratch_;
 };

@@ -43,6 +43,28 @@ void SpatialGrid::insert(std::size_t objectIndex, const AABB& bounds)
     }
 }
 
+void SpatialGrid::query(const AABB& area, std::vector<std::size_t>& outIndices) const
+{
+    outIndices.clear();
+
+    const int minCellX = worldToCell(area.min().x);
+    const int maxCellX = worldToCell(area.max().x);
+    const int minCellZ = worldToCell(area.min().z);
+    const int maxCellZ = worldToCell(area.max().z);
+
+    for (int cx = minCellX; cx <= maxCellX; ++cx) {
+        for (int cz = minCellZ; cz <= maxCellZ; ++cz) {
+            auto it = cells_.find(GridCellCoord{cx, cz});
+            if (it != cells_.end()) {
+                outIndices.insert(outIndices.end(), it->second.begin(), it->second.end());
+            }
+        }
+    }
+
+    std::sort(outIndices.begin(), outIndices.end());
+    outIndices.erase(std::unique(outIndices.begin(), outIndices.end()), outIndices.end());
+}
+
 float SpatialGrid::cellSize() const noexcept
 {
     return cellSize_;

@@ -27,3 +27,19 @@ This engine uses an optimized broad-phase collision detection system:
 | 5000 |         12,497,500 |           6,619 |     99.9% |      69,514us |   2,780us |  25.00x |
 
 For full methodology and results across all entity counts and cell sizes, see `docs/performance.md`.
+
+## Real-Time Performance Profiling
+
+Velocity Arena includes a built-in CPU profiler to measure the impact of collision and rendering subsystems on the real frame time.
+
+Example commands:
+
+\\ash
+./velocity_arena --profile
+\
+\\ash
+./velocity_arena     --stress 1000     --collision brute     --warmup-frames 180     --measure-frames 600
+\
+\\ash
+./velocity_arena     --stress 1000     --collision grid     --warmup-frames 180     --measure-frames 600
+\EOF

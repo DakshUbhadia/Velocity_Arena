@@ -88,6 +88,8 @@ add_executable(velocity_arena
     src/external/src/gl.c
     src/core/GameClock.cpp
     src/core/Input.cpp
+    src/core/Profiler.cpp
+    src/core/RuntimeOptions.cpp
     src/game/Player.cpp
     src/game/Enemy.cpp
     src/game/Projectile.cpp
@@ -122,6 +124,13 @@ add_custom_command(TARGET velocity_arena POST_BUILD
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(velocity_arena PRIVATE -Wall -Wextra -Wpedantic)
 endif()
+
+if(ENABLE_PROFILING)
+    target_compile_definitions(velocity_arena PRIVATE VA_ENABLE_PROFILING=1)
+else()
+    target_compile_definitions(velocity_arena PRIVATE VA_ENABLE_PROFILING=0)
+endif()
+
 enable_project_sanitizers(velocity_arena)
 
 # collision_benchmark -- only when BUILD_BENCHMARKS=ON
@@ -153,4 +162,12 @@ if(BUILD_TESTS)
     endif()
     enable_project_sanitizers(spatial_grid_tests)
     add_test(NAME SpatialGridTests COMMAND spatial_grid_tests)
+
+    add_executable(profiler_tests tests/profiler_tests.cpp src/core/Profiler.cpp)
+    target_include_directories(profiler_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        target_compile_options(profiler_tests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    enable_project_sanitizers(profiler_tests)
+    add_test(NAME ProfilerTests COMMAND profiler_tests)
 endif()

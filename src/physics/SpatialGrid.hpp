@@ -95,6 +95,9 @@ public:
     // Insert objectIndex into every XZ cell overlapped by bounds.
     void insert(std::size_t objectIndex, const AABB& bounds);
 
+    // Query for all objects in cells overlapping the given area. Deduplicates output.
+    void query(const AABB& area, std::vector<std::size_t>& outIndices) const;
+
     float       cellSize()          const noexcept;
     std::size_t occupiedCellCount() const noexcept;
 

@@ -30,3 +30,6 @@ ENV/
 .deps/
 
 # Internal Documentation
+
+PROGRESS.md
+docs/
