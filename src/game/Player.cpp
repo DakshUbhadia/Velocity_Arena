@@ -4,8 +4,8 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
 
-Player::Player(const glm::vec3& position, float movementSpeed)
-    : position_(position), movementSpeed_(movementSpeed) {
+Player::Player(const glm::vec3& position, float movementSpeed, int maxHealth)
+    : position_(position), movementSpeed_(movementSpeed), health_(maxHealth), maxHealth_(maxHealth) {
 }
 
 void Player::update(const Input& input, float deltaTime) {
@@ -26,6 +26,7 @@ void Player::update(const Input& input, float deltaTime) {
 
     if (glm::length(movement) > 0.0f) {
         movement = glm::normalize(movement);
+        facingDirection_ = movement;
     }
 
     position_ += movement * movementSpeed_ * deltaTime;
@@ -42,6 +43,34 @@ glm::mat4 Player::modelMatrix() const {
     // Position represents the center, so no additional scaling/offset is needed
     // if the default cube is from -0.5 to 0.5 and floor is at y=0.
     return model;
+}
+
+void Player::takeDamage(int amount) {
+    if (amount > 0) {
+        health_ = std::max(0, health_ - amount);
+    }
+}
+
+void Player::reset(const glm::vec3& position) {
+    position_ = position;
+    health_ = maxHealth_;
+    facingDirection_ = glm::vec3(0.0f, 0.0f, -1.0f);
+}
+
+const glm::vec3& Player::facingDirection() const {
+    return facingDirection_;
+}
+
+int Player::health() const {
+    return health_;
+}
+
+int Player::maxHealth() const {
+    return maxHealth_;
+}
+
+bool Player::isAlive() const {
+    return health_ > 0;
 }
 
 const glm::vec3& Player::position() const {

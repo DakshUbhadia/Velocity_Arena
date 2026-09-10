@@ -68,6 +68,9 @@ add_executable(velocity_arena
     src/core/GameClock.cpp
     src/core/Input.cpp
     src/game/Player.cpp
+    src/game/Enemy.cpp
+    src/game/Projectile.cpp
+    src/game/Game.cpp
     src/graphics/Camera.cpp
     src/graphics/Shader.cpp
     src/graphics/Mesh.cpp

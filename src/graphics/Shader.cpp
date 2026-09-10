@@ -12,8 +12,12 @@ Shader::Shader(const std::filesystem::path& vertexPath, const std::filesystem::p
     std::string vertexCode = readFile(vertexPath);
     std::string fragmentCode = readFile(fragmentPath);
 
-    unsigned int vertexShader = compileShader(GL_VERTEX_SHADER, vertexCode);
-    unsigned int fragmentShader = compileShader(GL_FRAGMENT_SHADER, fragmentCode);
+    unsigned int vertexShader = 0;
+    unsigned int fragmentShader = 0;
+
+    try {
+        vertexShader = compileShader(GL_VERTEX_SHADER, vertexCode);
+        fragmentShader = compileShader(GL_FRAGMENT_SHADER, fragmentCode);
 
     programId_ = glCreateProgram();
     glAttachShader(programId_, vertexShader);
@@ -37,8 +41,17 @@ Shader::Shader(const std::filesystem::path& vertexPath, const std::filesystem::p
         throw std::runtime_error("Failed to link shader program.");
     }
 
-    glDeleteShader(vertexShader);
-    glDeleteShader(fragmentShader);
+        glDeleteShader(vertexShader);
+        glDeleteShader(fragmentShader);
+    } catch (...) {
+        if (vertexShader != 0) glDeleteShader(vertexShader);
+        if (fragmentShader != 0) glDeleteShader(fragmentShader);
+        if (programId_ != 0) {
+            glDeleteProgram(programId_);
+            programId_ = 0;
+        }
+        throw;
+    }
 }
 
 Shader::~Shader() {

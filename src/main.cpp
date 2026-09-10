@@ -16,7 +16,7 @@
 #include "core/GameClock.hpp"
 #include "core/Input.hpp"
 
-#include "game/Player.hpp"
+#include "game/Game.hpp"
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
     (void)window;
@@ -45,6 +45,8 @@ int main() {
 
     if (!gladLoadGL((GLADloadfunc)glfwGetProcAddress)) {
         std::cerr << "Failed to initialize GLAD" << std::endl;
+        glfwDestroyWindow(window);
+        glfwTerminate();
         return -1;
     }
 
@@ -53,8 +55,9 @@ int main() {
     std::cout << "OpenGL Version: " << glGetString(GL_VERSION) << "\n";
 
     // Ensure OpenGL resources are destroyed before the context is terminated
-    {
-        Renderer renderer;
+    try {
+        {
+            Renderer renderer;
         
         Shader shader("shaders/basic.vert", "shaders/basic.frag");
         Mesh cubeMesh(Primitives::cubeVertices);
@@ -63,12 +66,11 @@ int main() {
         GameClock clock;
         Input input(window);
         
-        // Initial Player Position at origin, speed of 5.0f
-        Player player(glm::vec3(0.0f, 0.5f, 0.0f), 5.0f);
+        Game game;
         
         // Initial Camera Setup
         glm::vec3 cameraOffset(0.0f, 6.0f, 8.0f);
-        Camera camera(player.position() + cameraOffset, player.position(), glm::vec3(0.0f, 1.0f, 0.0f));
+        Camera camera(game.player().position() + cameraOffset, game.player().position(), glm::vec3(0.0f, 1.0f, 0.0f));
 
         double lastTitleUpdateTime = 0.0;
         int frameCount = 0;
@@ -87,21 +89,28 @@ int main() {
             }
 
             // 3. Update Game Logic
-            player.update(input, dt);
+            game.update(input, dt);
 
             // Update Camera to follow player
-            camera.setPosition(player.position() + cameraOffset);
-            camera.setTarget(player.position());
+            camera.setPosition(game.player().position() + cameraOffset);
+            camera.setTarget(game.player().position());
 
             // Update Title (FPS and ms per frame)
             frameCount++;
             if (clock.elapsedTime() - lastTitleUpdateTime >= 1.0) {
                 double fps = frameCount / (clock.elapsedTime() - lastTitleUpdateTime);
-                double ms = 1000.0 / fps;
                 
                 std::ostringstream title;
-                title << "Velocity Arena | FPS: " << static_cast<int>(fps) 
-                      << " | Frame: " << static_cast<int>(ms) << " ms";
+                if (game.state() == GameState::Running) {
+                    title << "Velocity Arena | HP: " << game.player().health() << "/" << game.player().maxHealth()
+                          << " | Score: " << game.score()
+                          << " | Enemies: " << game.enemies().size()
+                          << " | FPS: " << static_cast<int>(fps);
+                } else {
+                    title << "Velocity Arena | GAME OVER"
+                          << " | Score: " << game.score()
+                          << " | Press R to Restart";
+                }
                 glfwSetWindowTitle(window, title.str().c_str());
                 
                 lastTitleUpdateTime = clock.elapsedTime();
@@ -111,7 +120,10 @@ int main() {
             // 4. Calculate Matrices
             int width, height;
             glfwGetFramebufferSize(window, &width, &height);
-            if (height == 0) height = 1; // Prevent division by zero
+            if (width <= 0 || height <= 0) {
+                glfwWaitEvents();
+                continue;
+            }
 
             float aspectRatio = static_cast<float>(width) / static_cast<float>(height);
             glm::mat4 projection = glm::perspective(glm::radians(45.0f), aspectRatio, 0.1f, 100.0f);
@@ -125,27 +137,40 @@ int main() {
             floorModel = glm::scale(floorModel, glm::vec3(10.0f, 1.0f, 10.0f));
             renderer.draw(floorMesh, shader, floorModel, view, projection, glm::vec3(0.4f, 0.4f, 0.4f));
 
-            // Render Static Objects (Remaining cubes from Milestone 1, colored differently)
-            glm::mat4 cube2Model = glm::mat4(1.0f);
-            cube2Model = glm::translate(cube2Model, glm::vec3(-2.0f, 0.5f, -2.0f));
-            cube2Model = glm::rotate(cube2Model, glm::radians(45.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-            renderer.draw(cubeMesh, shader, cube2Model, view, projection, glm::vec3(0.2f, 0.8f, 0.2f));
+            // Render Player (Bright Green/Blue as suggested)
+            if (game.player().isAlive()) {
+                renderer.draw(cubeMesh, shader, game.player().modelMatrix(), view, projection, glm::vec3(0.2f, 1.0f, 0.2f));
+            }
 
-            glm::mat4 cube3Model = glm::mat4(1.0f);
-            cube3Model = glm::translate(cube3Model, glm::vec3(2.0f, 0.5f, -1.0f));
-            cube3Model = glm::rotate(cube3Model, glm::radians(25.0f), glm::vec3(1.0f, 1.0f, 0.0f));
-            cube3Model = glm::scale(cube3Model, glm::vec3(1.5f, 1.5f, 1.5f));
-            renderer.draw(cubeMesh, shader, cube3Model, view, projection, glm::vec3(0.2f, 0.2f, 0.8f));
+            // Render Enemies
+            for (const Enemy& enemy : game.enemies()) {
+                if (!enemy.alive()) continue;
+                glm::vec3 color(1.0f, 0.0f, 0.0f); // Default to red
+                if (enemy.state() == EnemyState::Idle) color = glm::vec3(0.8f, 0.8f, 0.2f); // yellowish
+                else if (enemy.state() == EnemyState::Chase) color = glm::vec3(1.0f, 0.5f, 0.0f); // orange
+                else if (enemy.state() == EnemyState::Attack) color = glm::vec3(1.0f, 0.0f, 0.0f); // strong red
+                
+                renderer.draw(cubeMesh, shader, enemy.modelMatrix(), view, projection, color);
+            }
 
-            // Render Player (Bright Red)
-            glm::mat4 playerModel = player.modelMatrix();
-            renderer.draw(cubeMesh, shader, playerModel, view, projection, glm::vec3(1.0f, 0.2f, 0.2f));
+            // Render Projectiles
+            for (const Projectile& proj : game.projectiles()) {
+                if (!proj.active()) continue;
+                renderer.draw(cubeMesh, shader, proj.modelMatrix(), view, projection, glm::vec3(0.0f, 1.0f, 1.0f)); // Cyan
+            }
 
             // 6. Swap Buffers
             glfwSwapBuffers(window);
         }
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Fatal error: " << e.what() << "\n";
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return EXIT_FAILURE;
     }
 
+    glfwDestroyWindow(window);
     glfwTerminate();
     return 0;
 }

@@ -14,7 +14,57 @@
 - **Renderer**: Handles the actual drawing operations (e.g., `glDrawArrays`) using provided `Mesh` and `Shader` combinations.
 
 ## Game Components
-- **Player**: Represents the gameplay state of the player (position, movement speed). Uses a normalized movement vector scaled by delta time to move independently of frame rate. **Note**: `Player` does not handle rendering logic directly. It simply exposes its `modelMatrix()`.
+- **Game**: The central orchestration class. It owns `Player`, a `std::vector<Enemy>`, and a `std::vector<Projectile>`. It manages score, state, entity spawning, collisions, and gameplay loop. Main does not individually own these gameplay entities.
+- **Player**: Represents the gameplay state of the player (health, position, facing direction).
+- **Enemy**: Uses a finite-state machine (Idle, Chase, Attack) based on squared distance from the player.
+- **Projectile**: A short-lived, linear-moving entity spawned by the player.
+
+## Game Ownership Model
+
+```
+Application / main
+        |
+        +---- Renderer
+        +---- Camera
+        +---- Input
+        +---- GameClock
+        |
+        +---- Game
+                |
+                +---- Player
+                |
+                +---- vector<Enemy>
+                |
+                +---- vector<Projectile>
+```
+
+**Why Game does not own Renderer**:
+`Game` is strictly for gameplay logic and state. The `Renderer` requires OpenGL contexts and handles visual representation. Keeping them separated ensures that game state can be updated independently of how it is drawn, and `main.cpp` orchestrates the flow.
+
+## Update Flow
+
+```
+Input
+  |
+  v
+Game::update(dt)
+  |
+  +--> Player update
+  |
+  +--> Enemy FSM
+  |
+  +--> Projectile update
+  |
+  +--> Gameplay collision
+  |
+  +--> Score / Health / GameState
+  |
+  v
+main.cpp
+  |
+  v
+Renderer
+```
 
 ## Lifetime and Ownership
 - `main.cpp` manages the lifetime of OpenGL/GLFW contexts and resource creation.

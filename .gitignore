@@ -24,7 +24,5 @@ ENV/
 # Windows/WSL specific
 *Zone.Identifier
 
-PROGRESS.md
-
 # Agent/System Metadata
 *.metadata.json
