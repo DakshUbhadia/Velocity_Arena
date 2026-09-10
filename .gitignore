@@ -1,0 +1,25 @@
+build/
+build-*/
+.cache/
+compile_commands.json
+.vscode/
+.idea/
+*.out
+*.exe
+*.o
+*.a
+*.so
+*.dll
+*.dylib
+__pycache__/
+*.pyc
+results/
+
+# Virtual Environments
+.venv/
+env/
+venv/
+ENV/
+
+# Windows/WSL specific
+*Zone.Identifier
